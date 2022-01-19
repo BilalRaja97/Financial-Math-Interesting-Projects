@@ -1,0 +1,758 @@
+---
+title: "STA2530 - Project3"
+author: "Simon Yu Yin"
+date: "12/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("stats")
+#install.packages("readr")
+#install.packages("pracma")
+#install.packages("datetime")
+library(datetime)
+library(stats)
+library(readr)
+library(pracma)
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+library(expm)
+library(tidyquant)
+library(forecast)
+library(timeSeries)
+#devtools::install_github("cykbennie/fbi")
+library(fbi)
+
+#vignette("factor_fred",package = "fbi")
+
+#describe_md(X80,name.only=TRUE,verbose=FALSE)
+```
+
+```{r Q2.1)}
+#Q2.1)
+
+#fredmd_description
+data(fredmd_description)
+
+########## X80: SP500 ????
+########## X113: CPI:All Items ????
+a<-describe_md("X80",name.only = FALSE,verbose = FALSE)
+b<-describe_md("X113",name.only = FALSE,verbose = FALSE)
+
+# For our dataset "current.csv":
+# X74: SP500
+# X106: CPI:All Items
+
+data_before<-fredmd(file= "current.csv", date_start = NULL,date_end=NULL,transform=FALSE)
+
+
+SP500_before<-data_before$X74
+CPI_before<-data_before$X106
+
+plot(data_before$date,SP500_before,main = "SP 500",col="blue",type="o",pch=20,panel.first = grid(),ylab = "SP500 Price",xlab="Year")
+
+plot(data_before$date,CPI_before,main = "CPI ",col="blue",type="o",pch=20,panel.first = grid(),ylab = "CPI",xlab="Year")
+
+par(mfrow=c(2,1))
+acf(SP500_before,main="ACF for SP500_before_transformation")
+pacf(SP500_before,main="PACF for SP500_before_transformation")
+
+par(mfrow=c(2,1))
+acf(CPI_before,main="ACF for CPI_before_transformation")
+pacf(CPI_before,main="PACF for CPI_before_transformation")
+
+```
+Based on Autocorrelation function(ACF) for the SP500 (before transformation) and CPI (before transformation), the ACF is slowly declining as the number of lags increase suggesting that the original series is not stationary. The term slowly decaying can also be used to explain this pattern.
+
+In addition, based on Partial Autocorrelation function (PACF) of the SP500 (before transformation) and CPI (before transformation), there is one significant spike (exceeding the standard error (SE) band). This is a signal that we can perform the first differencing to turn the original series into stationary series. 
+
+```{r Q2.1) and 2)}
+# transform original SP500 price with first difference of logs of SP500:
+SP500_transformed<-diff(log(SP500_before))
+
+# transform original CPI index with first difference of logs of CPI index:
+CPI_transformed<-diff(log(CPI_before))
+
+
+# transform all data to be stationary according to the transformation code from website
+data_transformed<-fredmd(file= "current.csv", date_start = NULL,date_end=NULL,transform=TRUE)
+
+
+SP500_from_data_transformed<-na.omit(data_transformed$X74)
+CPI_from_data_transformed<-na.omit(data_transformed$X106)
+
+
+# final SP500 returns and Inflation(CPI) we use for our analysis
+SP500<- SP500_from_data_transformed
+CPI<-diff(log(CPI_before))
+CPI_second_diff<-CPI_from_data_transformed
+
+# ACF and PACF after transformed
+plot(tail(data_before$date,-1),SP500,main = "First Difference SP 500",col="blue",type="o",pch=20,panel.first = grid(),ylab = "SP500 Returns",xlab="Year")
+
+plot(tail(data_before$date,-1),CPI,main = "First Difference CPI ",col="blue",type="o",pch=20,panel.first = grid(),ylab = "CPI inflation",xlab="Year")
+
+plot(tail(data_before$date,-2),CPI_second_diff,main = "Second Difference CPI ",col="blue",type="o",pch=20,panel.first = grid(),ylab = "CPI inflation",xlab="Year")
+
+par(mfrow=c(2,1))
+acf(SP500,main="ACF for First Difference SP500")
+pacf(SP500,main="PACF for First Difference SP500")
+
+par(mfrow=c(2,1))
+acf(CPI,main="ACF for First Difference CPI")
+pacf(CPI,main="PACF for First Difference CPI")
+
+par(mfrow=c(2,1))
+acf(CPI_second_diff,main="ACF for Second Difference CPI")
+pacf(CPI_second_diff,main="PACF for Second Difference CPI")
+```
+McCracken et Ng(2016) treat price indices as I(2) variables, hence they apply second difference. Additionally, we would also treat the target inflation series as I(0), in other words, construct CPI inflation as the first difference of logs of CPI index.
+
+Also, McCracken et Ng(2016) treat SP500 as I(0), in other words, construct SP500 returns as the first difference of logs of CPI index, and we would use the same one. 
+
+Now these two original series (SP500 and CPI) have been transformed into stationary series.
+
+
+**Model Validation and Estimation**
+
+**ARMA processes for SP500**
+```{r Q1.model for SP500}
+# Model 1 : ARIMA (3 , 0, 3)
+model1<-arima(SP500,order=c(3,0,3))
+summary(model1)
+# AIC = -2909
+
+# Model 2 : ARIMA (3 , 0, 0)
+model2<-arima(SP500,order=c(3,0,0))
+summary(model2)
+# AIC = -2912
+
+# Model 3 : ARIMA (1 , 0, 1)
+model3<-arima(SP500,order=c(1,0,1))
+summary(model3)
+# AIC = -2914
+
+# Model 4 : ARIMA (1 , 0, 0)
+model4<-arima(SP500,order=c(1,0,0))
+summary(model4)
+# AIC = -2913
+
+
+Box.test(model1$residuals,type="Ljung-Box")
+
+```
+Based on the lowest AIC value, we choose model 4, ARIMA (3, 0, 3) as the good model. In addition, based on Ljung-Box test, we accepted the null hypothesis indicated that the residuals are white noise.
+
+
+**ARMA processes for CPI by construing CPI inflation as the first difference of logs of CPI index**
+```{r Q1.model for CPI with first difference}
+# Model 11 : ARIMA (3 , 0, 3)
+model11<-arima(CPI,order=c(3,0,3))
+summary(model11)
+# AIC = -6993
+
+# Model 22 : ARIMA (3 , 0, 0)
+model22<-arima(CPI,order=c(3,0,0))
+summary(model22)
+# AIC = -6938
+
+# Model 33 : ARIMA (1 , 0, 1)
+model33<-arima(CPI,order=c(1,0,1))
+summary(model33)
+# AIC = -6941
+
+# Model 44 : ARIMA (1 , 0, 0)
+model44<-arima(CPI,order=c(1,0,0))
+summary(model44)
+# AIC = -6921
+
+# Model 55 : ARIMA (11 , 0, 0)
+model55<-arima(CPI,order=c(11,0,0))
+summary(model55)
+# AIC = -6997
+
+# Model 66 : ARIMA (11 , 0, 1)
+model66<-arima(CPI,order=c(11,0,1))
+summary(model66)
+# AIC = -7002
+
+# Model 77 : ARIMA (2 , 0, 0)
+model77<-arima(CPI,order=c(2,0,0))
+summary(model77)
+# AIC = -6930
+
+
+Box.test(model44$residuals,type="Ljung-Box")
+
+```
+
+**ARMA processes for CPI by construing CPI inflation as the second difference of logs of CPI index**
+```{r Q1.model for CPI with second difference}
+# Model 111 : ARIMA (3 , 0, 3)
+model111<-arima(CPI_second_diff,order=c(3,0,3))
+summary(model111)
+# AIC = -6977
+
+# Model 222 : ARIMA (3 , 0, 0)
+model222<-arima(CPI_second_diff,order=c(3,0,0))
+summary(model222)
+# AIC = -6906
+
+# Model 333 : ARIMA (1 , 0, 1)
+model333<-arima(CPI_second_diff,order=c(1,0,1))
+summary(model333)
+# AIC = -6979
+
+# Model 444 : ARIMA (1 , 0, 0)
+model444<-arima(CPI_second_diff,order=c(1,0,0))
+summary(model444)
+# AIC = -6822
+
+# Model 555 : ARIMA (11 , 0, 0)
+model555<-arima(CPI_second_diff,order=c(11,0,0))
+summary(model555)
+# AIC = -6989
+
+# Model 666 : ARIMA (1 , 0, 3)
+model666<-arima(CPI_second_diff,order=c(1,0,3))
+summary(model666)
+# AIC = -6981
+
+# Model 777 : ARIMA (2 , 0, 0)
+model777<-arima(CPI_second_diff,order=c(2,0,0))
+summary(model777)
+# AIC = -6859
+
+
+Box.test(model444$residuals,type="Ljung-Box")
+
+```
+
+
+
+**Model Application**
+```{r model application}
+# forecesting SP500_first_diff by using ARIMA()
+model4.for<-predict(model1,n.ahead=12)
+dates<-seq(as.Date("2021/11/1"), by = "month", length.out = 12)
+plot(dates,model4.for$pred,type="l",col="red",xlab = "Year 2021-2022")
+
+# forecesting CPI_first_diff by using ARIMA(1,0,0) with model44
+
+
+# # forecesting CPI_second_diff by using ARIMA(1,0,0) with model444
+
+```
+
+
+
+```{r Q3 a) Scree Plot from website}
+
+#screeplot(results,npc=10,type='l')
+
+# load data
+# View(data_transformed)
+df<-data_transformed[,c(-1,-75,-107)]
+
+# perform PCA
+df[is.na(df)]<-0
+results <-prcomp(df,scale=TRUE)
+results
+
+
+# calculate total variance explained by each principal component 
+var_explained<-results$sdev^2 / sum(results$sdev^2)
+
+
+# create the scree plot
+library(ggplot2)
+
+qplot(c(1:125), var_explained) + 
+  geom_line() + 
+  xlab("Principal Component") + 
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 0.25)
+
+
+print(var_explained)
+print(sum(var_explained))
+```
+
+
+
+
+
+
+
+
+The x-axis displays the principal component and the y-axis displays the percentage of total variance explained by each individual principal component.
+
+From the results, we can see:
+
+The first principal component explains 18.7% of the total variation in the dataset.
+
+The second principal component explains 6.78% of the total variation in the dataset.
+
+The third principal component explains 6.18% of the total variation in the dataset.
+
+Notice that all of the percentages sum to 100%.
+
+```{r Q3.Scree Plot and Trace Plot from lecture}
+# scree plot: order eigenvalues
+rmax <- 20   # Maximum number of factors
+corr<-cor(df)  # corrlation of X
+V<-svd(corr,nu=nrow(df), nv=ncol(df))$d
+eige<-V[1:rmax]
+
+plot(1:rmax,eige,type = 'l',main="Scree plot",ylab="Eigenvalues",xlab='Number of factors')
+grid()
+
+
+# Trace
+res.pca <- prcomp(df, scale = TRUE)
+res.pca
+
+
+```
+
+```{r Q3.c)}
+
+
+```
+
+## Predictive Modelling
+
+
+# RW
+
+```{r}
+plot(rwf(SP500, h = 12, drift = TRUE, level = 95))
+
+plot(rwf(SP500, h = 12, drift = FALSE, level = 95))
+
+plot(rwf(CPI, h = 12, drift = TRUE, level = 95))
+
+plot(rwf(CPI, h = 12, drift = FALSE, level = 95))
+
+```
+
+# AR(p)
+
+```{r}
+# AR(1) for sp500
+AR1.sp500 <- arima(SP500, order = c(1,0,0))
+ts.plot(SP500, lty = "solid")
+AR1.sp500.fit <- SP500 - residuals(AR1.sp500)
+points(AR1.sp500.fit, type = "l", pch = 2, col = 2, lty = 1)
+# AR(2) for sp500
+AR1.sp500 <- arima(SP500, order = c(2,0,0))
+ts.plot(SP500, lty = "solid")
+AR1.sp500.fit <- SP500 - residuals(AR1.sp500)
+points(AR1.sp500.fit, type = "l", pch = 2, col = 2, lty = 1)
+```
+
+
+# ADL(p,r)
+
+```{r}
+library(dynlm)
+library(lubridate)
+
+#ADL(2,2)
+
+#DECLARE TIME SERIES OBJECTS
+#ts_plot(SP500)
+x <- df[,3]
+
+
+
+SP500.dates <- ts(SP500, start = c(1959,2), end = c(2021,10), frequency = 12)
+CPI.dates <- ts(CPI, start = c(1959,2), end = c(2021,10), frequency = 12)
+CPI2.dates <- ts(CPI_second_diff, start = c(1959,2), end = c(2021,10), frequency = 12)
+
+p1.ts <- ts(df[2:754,76], start = c(1959,2), end = c(2021,10), frequency = 12)
+p2.ts <- ts(df[2:754,77], start = c(1959,2), end = c(2021,10), frequency = 12)
+p3.ts <- ts(df[2:754,78], start = c(1959,2), end = c(2021,10), frequency = 12)
+SP500.ALD <- dynlm(SP500.dates~ L(SP500.dates,1)+ L(SP500.dates,2)+ L(p1.ts)+L(p2.ts))
+summary(SP500.ALD)
+
+#plot(sp500.ALD)
+#forecast(sp500.ALD, h = 12, level = 95, newdata = predict(sp500.ALD))
+```
+
+#Diffusion Index
+
+```{r}
+DIAR_best <- function(df,h,k,var_y){ # 
+  bic.temp <- 100000000
+  bic.holder <- c()
+  k.temp <- 0
+  if (var_y == "SP500"){
+    y <- df[,75] # select sp500 from df
+    df.temp <- df[,c(-75)] #exclude y from dataset
+  }
+  else if (var_y == "CPI"){
+    y <- CPI
+    df.temp <- df[,-107]
+  }
+  
+  # perform pca anal on df.temp
+  pca.temp <- prcomp(df.temp,scale = TRUE)
+  y.df <- data.frame(y = y[(h+1):753], y.lags <- y[1:(753-h)])
+  
+  for (i in 1:k){
+    df.model <- bind_cols(y.df,data.frame(pca.temp$x[1:(753-h),1:i]))
+    df.bic <- lm(y ~., data = df.model) %>% BIC()
+    bic.holder <- c(bic.holder,df.bic)
+    df.actual.model <-lm(y ~., data = df.model)
+    if(df.bic <= bic.temp){
+      model.pcs <- df.model
+      model.best <- df.actual.model
+      bic.temp <- df.bic
+      k.temp <- i
+      
+    }
+  }
+  model.bundle <- list("BIC" = bic.temp, "values" = model.pcs,"Model" = model.best ,"PCs" = k.temp, "BICs" =  bic.holder)
+  return(model.bundle)
+}
+
+DIAR.SP500<- DIAR_best(df,0,19,"SP500")
+DIAR.CPI<- DIAR_best(df,0,19,"CPI")
+```
+
+```{r}
+# selecting optimal PCS
+plot(x = 1:19,y = DIAR.SP500$BICs, type = "point", xlab = "Number of PCs", ylab = "BIC value", main = "SP500 DIAR Model Evaluation" )
+
+text(7,DIAR.SP500$BICs[7], labels = rownames(DIAR.SP500$BICs[7]))
+
+plot(x = 1:19,y = DIAR.CPI$BICs, type = "point", xlab = "Number of PCs", ylab = "BIC value", main = "CPI DIAR Model Evaluation" )
+
+
+
+```
+
+```{r}
+
+
+#graph.temp <- ts(0, start = c(1999,2), end = c(2025,01), frequency = 12) 
+#plot(graph.temp, type = "n", ylim = c(-0.2,0.2))
+plot(SP500.dates, ylab = "SP500 first difference", type = "l")
+temp.diar.sp500 <-ts( predict(DIAR.SP500.h1$"Model", level = .95), start = c(1959,2), end = c(2021,10), frequency = 12) 
+points(temp.diar.sp500, col = "red", type = "l")
+legend(x="bottomleft",legend = c("SP500","Fitted Model"), col = c("black","red"), lty = c(1,1), cex = 0.7)
+
+
+
+diar.sp500.h1t <- ts( DIAR.SP500.h1.predict,start = c(2021,10), end = c(2021,11), frequency = 1)
+#points(diar.sp500.h1t, pch = 19, col = "blue")
+#lines(diar.sp500.h1t, pch = 19, col = "blue")
+diar.sp500.h3t <- ts( DIAR.SP500.h3.predict,start = c(2022,01), end = c(2022,02), frequency = 1)
+#points(diar.sp500.h3t, pch = 19, col = "blue")
+#lines(diar.sp500.h3t, pch = 19, col = "blue")
+#points(diar.sp500.h6t, pch = 19, col = "blue")
+#lines(diar.sp500.h6t, pch = 19, col = "blue")
+diar.sp500.h6t <- ts( DIAR.SP500.h6.predict,start = c(2022,04), end = c(2022,05), frequency = 1)
+
+diar.sp500.h12t <- ts( DIAR.SP500.h12.predict,start = c(2022,10), end = c(2022,11), frequency = 1)
+#points(diar.sp500.h12t, pch = 19, col = "blue")
+#lines(diar.sp500.h12t, pch = 19, col = "blue")
+#points(ts(c(diar.sp500.h1t,diar.sp500.h3t,diar.sp500.h6t,diar.sp500.h12t)), pch = 19, col = "blue")
+
+```
+```{r}
+plot(CPI.dates, ylab = "CPI transformed")
+temp.diar.cpi <-ts( predict(DIAR.CPI$"Model", level = .95), start = c(1959,2), end = c(2021,10), frequency = 12) 
+points(temp.diar.cpi, col = "red", type = "c")
+legend(x="bottomleft",legend = c("CPI","Fitted Model"), col = c("black","red"), lty = c(1,1), cex = 0.7)
+```
+
+
+Forecasting
+
+```{r}
+# SP500
+# h = 1 
+DIAR.SP500.h1 <- DIAR_best(df,1,40,"SP500")
+DIAR.SP500.h1.predict <- predict(DIAR.SP500.h1$"Model", level = .95)[752]
+
+# h = 3
+DIAR.SP500.h3 <- DIAR_best(df,3,40,"SP500")
+DIAR.SP500.h3.predict <- predict(DIAR.SP500.h1$"Model", level = .95)[749]
+# h = 6
+DIAR.SP500.h6 <- DIAR_best(df,6,40,"SP500")
+DIAR.SP500.h6.predict <- predict(DIAR.SP500.h1$"Model", level = .95)[746]
+# h = 12
+DIAR.SP500.h12 <- DIAR_best(df,12,40,"SP500")
+DIAR.SP500.h12.predict <- predict(DIAR.SP500.h1$"Model", level = .95)[740]
+
+```
+```{r}
+# CPI
+# h = 1 
+DIAR.cpi.h1 <- DIAR_best(df,1,40,"CPI")
+predict(DIAR.cpi.h1$"Model", level = .95)[753]
+
+# h = 3
+DIAR.cpi.h3 <- DIAR_best(df,3,40,"CPI")
+ predict(DIAR.cpi.h1$"Model", level = .95)[750]
+# h = 6
+DIAR.cpi.h6 <- DIAR_best(df,6,40,"CPI")
+predict(DIAR.cpi.h1$"Model", level = .95)[747]
+# h = 12
+DIAR.cpi.h12 <- DIAR_best(df,12,40,"CPI")
+predict(DIAR.cpi.h1$"Model", level = .95)[741]
+```
+------------------------------------------mspe of diar
+
+```{r}
+#CALCULATE MSPE OF BEST AR MODEL(SP500)
+SP500.sample <- SP500[1:(753-501)] # UPTO THE 1980 01 
+DIAR_best <- function(df,h,k,var_y, x.sample){ # 
+  bic.temp <- 100000000
+  bic.holder <- c()
+  k.temp <- 0
+  if (var_y == "SP500"){
+    y <- x.sample # select sp500 from df
+    df.temp <- df[1:(252),-c(75)] #exclude y from dataset
+  }
+  else if (var_y == "CPI"){
+    y <- x.sample
+    df.temp <- df[1:(252),c(-107)]
+  }
+  
+  # perform pca anal on df.temp
+  pca.temp <- prcomp(df.temp)
+  y.df <- data.frame(y = y[(h+1):(252)], y.lags <- y[1:(252-h)])
+  i = 7
+  df.model <- bind_cols(y.df,data.frame(pca.temp$x[1:(252-h),1:i]))
+  df.actual.model <-lm(y ~., data = df.model)
+  return(df.actual.model)
+}
+
+
+
+
+
+for (i in 1:501){
+  
+  
+  one.step.pred <- predict(DIAR_best(df,h = 1, k = 7, "SP500",SP500[i:(252+i)]), n.ahead = 1)
+  
+  SP500.sample <- c(SP500.sample, one.step.pred )
+  
+  DIAR.sp500.f <- DIAR_best(df,h = 1, k = 7, "SP500",SP500[1:(252+i)])
+  
+}
+
+MSPE.SP.DIAR <- mean(sum(SP500[253:753] - SP500.sample[253:753])^2)
+MSPE.SP.DIAR
+plot(ts(SP500.sample[253:754], start = c(1980,01), end = c(2021,10), frequency = 12 ), main = "Forecasting DIAR for SP500", ylab = "SP500 transformed forecast")
+cpi.sample <- CPI[1:(753-501)] # UPTO THE 1980 01 
+
+
+for (i in 1:501){
+  
+  
+  one.step.pred <- predict(DIAR_best(df,h = 1, k = 7, "CPI",CPI[1:(252+i)]), n.ahead = 1)
+  
+  cpi.sample <- c(cpi.sample, one.step.pred )
+  
+
+  
+}
+
+MSPE.CPI.DIAR <- mean(sum(CPI[253:753] - cpi.sample[253:753])^2)
+MSPE.CPI.DIAR
+plot(ts(cpi.sample[253:754], start = c(1980,01), end = c(2021,10), frequency = 12 ), main = "Forecasting DIAR for CPI", ylab = "CPI transformed forecast")
+```
+
+
+
+# Lasso
+
+```{r}
+library(glmnet)
+library(Rcpp)
+```
+
+```{r}
+LASSO_best <- function(df,h,var_y){
+
+  if (var_y == "SP500"){
+    y <- as.matrix(SP500) # select sp500 from df
+    df.temp <- as.matrix(df[(h+1):753,c(-75)]) #exclude y from dataset
+  }
+  else if (var_y == "CPI"){
+    y <- as.matrix(CPI)
+    df.temp <- as.matrix(df[1:753,c(-107)])
+  }
+  lambdas <- 10^seq(2, -8, by = -.1)
+  # alpha = 1 implements lasso
+  model.lasso <- cv.glmnet(df.temp[,],y,alpha =1,standardize = TRUE ,lambda =lambdas, nfolds = 5)
+  plot(model.lasso)
+  best_lambda <- model.lasso$lambda.min
+  model <- glmnet(df.temp[,],y,alpha =1 ,standardize = TRUE, lambda = best_lambda , nfolds = 5)
+  coef(model)
+  plot(model)
+  items<- list("cvmodel" = model.lasso, "minl" = best_lambda, "model" = model)
+  return(items)
+  
+  
+}
+# edit back 252 BACK TO 754 for original prediction, changed function for MSPE pur[] 
+lasso.sp <-LASSO_best(df,h = 0,"SP500")
+lasso.cpi <- LASSO_best(df,h = 0,"CPI")
+
+
+```
+
+```{r}
+coef(lasso.sp$model)
+lasso.sp$minl
+coef(lasso.cpi$model)
+lasso.cpi$minl
+```
+-----------------------------------------------------LASSO MSPE ----------------------------------------------
+```{r}
+SP500.sample <- SP500[1:(753-500)]
+
+for (i in 1:501){
+  temp <- glmnet(df[1:(251+i),c(-75)],SP500[1:(251+i)],alpha =1 ,standardize = TRUE, lambda =0.0039, nfolds = 5)
+  
+  one.step.pred <- predict(temp, newx = as.matrix(df[1:(252+i),c(-75)]))[251+i] 
+  
+  SP500.sample <- c(SP500.sample, one.step.pred )
+  
+  
+}
+
+MSPE.SP.LASSO <- mean(sum(SP500[253:753] - SP500.sample[253:753])^2)
+MSPE.SP.LASSO
+plot(ts(SP500.sample[253:754], start = c(1980,01), end = c(2021,10), frequency = 12 ), main = "Forecasting LASSO for SP500", ylab = "SP500 transformed forecast")
+cpi.sample <- CPI[1:(753-500)] # UPTO THE 1980 01 
+
+
+for (i in 1:501){
+  
+  temp <- glmnet(df[1:(251+i),c(-107)],CPI[1:(251+i)],alpha =1 ,standardize = TRUE, lambda =0.00025, nfolds = 5)
+  
+  one.step.pred <- predict(temp, newx = as.matrix(df[1:(252+i),c(-107)]))[251+i] 
+  
+  
+  cpi.sample <- c(cpi.sample, one.step.pred )
+  
+
+  
+}
+
+MSPE.CPI.LASSO <- mean(sum(CPI[253:753] - cpi.sample[253:753])^2)
+MSPE.CPI.LASSO
+
+plot(ts(cpi.sample[253:754], start = c(1980,01), end = c(2021,10), frequency = 12 ), main = "Forecasting LASSO for CPI", ylab = "CPI transformed forecast")
+```
+
+
+
+Forecasting
+
+```{r}
+s <-  as.matrix(df[,75])
+s.df <- as.matrix(df[,c(-75)])
+s.temp <- glmnet(s.df,s,alpha =1 ,standardize = TRUE, lambda =lasso.sp$minl, nfolds = 5)
+LASSO.SP500.h1.forecast <- predict( s.temp ,s.df ,newx = , s = lasso.sp$minl)[753]
+
+LASSO.SP500.h3.forecast <- predict( s.temp ,s.df ,newx = , s = lasso.sp$minl)[750]
+
+LASSO.SP500.h6.forecast <- predict( s.temp ,s.df ,newx = , s = lasso.sp$minl)[747]
+
+LASSO.SP500.h12.forecast <- predict( s.temp ,s.df ,newx = , s = lasso.sp$minl)[741]
+
+
+plot(SP500.dates, ylab = "SP500 first difference")
+LASSO.temp.sp <-ts( predict(DIAR.SP500.h1$"Model", level = .95), start = c(1959,2), end = c(2021,10), frequency = 12) 
+points(LASSO.temp.sp , col = "red", type = "l")
+legend(x="bottomleft",legend = c("SP500","Fitted Model"), col = c("black","red"), lty = c(1,1), cex = 0.8)
+
+# CPI
+c <-  as.matrix(CPI)
+c.df <- as.matrix(df[2:754,c(-107)])
+c.temp <- glmnet(c.df,c,alpha =1 ,standardize = TRUE, lambda =lasso.cpi$minl, nfolds = 5)
+
+LASSO.cpi.h1.forecast <- predict( c.temp ,c.df, s = lasso.sp$minl)
+
+LASSO.cpi.h3.forecast <- predict( c.temp ,c.df ,newx = , s = lasso.sp$minl)[750]
+
+LASSO.cpi.h6.forecast <- predict( c.temp ,c.df ,newx = , s = lasso.sp$minl)[747]
+
+LASSO.cpi.h12.forecast <- predict( c.temp ,c.df ,newx = , s = lasso.sp$minl)[741]
+
+
+
+
+
+
+plot(CPI.dates, ylab = "CPI first difference")
+LASSO.temp.c <-ts(LASSO.cpi.h1.forecast, start = c(1959,2), end = c(2021,10), frequency = 12) 
+points(LASSO.temp.c , col = "red", type = "l")
+legend(x="bottomleft",legend = c("SP500","Fitted Model"), col = c("black","red"), lty = c(1,1), cex = 0.9)
+#points(CPI2.dates, col = "blue", type ="l")
+
+```
+
+
+OUT OF SAMPLE LASSO 
+```{r}
+s <-  as.matrix(df[,75])
+s.df <- as.matrix(df[,c(-75)])
+s.temp <- glmnet(s.df,s,alpha =1 ,standardize = TRUE, lambda =lasso.sp$minl, nfolds = 5)
+LASSO.SP500.h1.forecast <- predict( s.temp ,s.df ,newx = , s = lasso.sp$minl)[753]
+sp.forecast <- c()
+
+# for 12 month range
+for (i in 1:12){
+  s.temp <- glmnet(s.df,as.matrix(s[i:(753+i)]),alpha =1 ,standardize = TRUE, lambda =lasso.sp$minl, nfolds = 5)
+  predict.temp <- predict( s.temp ,s.df ,newx = , s = lasso.sp$minl)[753]
+  s <- c(s,predict.temp)
+  sp.forecast <- c(sp.forecast,predict.temp)
+}
+s.ts <- ts(sp.forecast, start = c(2021,10), end = c(2022,10), frequency = 12)
+```
+
+```{r}
+library(zoo)
+plot(s.ts, main = "SP500 1 YEAR FORECAST", ylab = "SP500", type = "b",lwd= 2)
+```
+
+
+
+```{r}
+c <-  as.matrix(CPI)
+c.df <- as.matrix(df[2:754,c(-75)])
+c.temp <- glmnet(c.df,c,alpha =1 ,standardize = TRUE, lambda =lasso.cpi$minl, nfolds = 5)
+#LASSO.SP500.h1.forecast <- predict( c.temp ,c.df ,newx = , s = lasso.cpi$minl)[753]
+cpi.forecast <- c()
+
+# for 12 month range
+for (i in 1:12){
+  c.temp <- glmnet(c.df,as.matrix(c[(i):(752+i)]),alpha =1 ,standardize = TRUE, lambda =lasso.cpi$minl, nfolds = 5)
+  predict.temp <- predict( c.temp ,c.df ,newx = , s = lasso.cpi$minl)[753]
+  c <- c(c,predict.temp)
+  cpi.forecast <- c(cpi.forecast,predict.temp)
+}
+cpi.ts <- ts(cpi.forecast, start = c(2021,10), end = c(2022,10), frequency = 12)
+plot(cpi.ts, main = "CPI 1 YEAR FORECAST", ylab = "CPI", type = "b",lwd= 2)
+
+```
+
+
+
+
+
