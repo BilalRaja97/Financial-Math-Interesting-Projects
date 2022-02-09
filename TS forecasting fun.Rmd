@@ -1,6 +1,6 @@
 ---
 title: "STA2530 - Project3"
-author: "Simon Yu Yin"
+author: "Bilal, Simon and Peace" 
 date: "12/11/2021"
 output: html_document
 ---
